@@ -1,0 +1,73 @@
+image: ubuntu:16.04
+
+stages:
+  - build-stage1
+  - build-stage2
+  - publish
+
+build-binary:
+  stage: build-stage1
+  only:
+  - test
+  - master
+  - /^release/.*$/
+  image: golang:1.14-stretch
+  before_script:
+  - mkdir -p /tmp/key
+  - chmod 700 /tmp/key
+  - echo "$SSH_PRIVATE_KEY" > /tmp/key/id_rsa
+  - chmod 600 /tmp/key/id_rsa
+  - export GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /tmp/key/id_rsa'
+  - echo -e '[url "git@scm.isp.sky.com:"]\n    insteadOf = https://scm.isp.sky.com/' >> ~/.gitconfig
+  - export GOPRIVATE="scm.isp.sky.com"
+  script:
+  - go build -o bin/isp-http-redirector cmd/isp-http-redirector/main.go
+  - go build -o bin/isp-redir-controller cmd/isp-redir-controller/main.go
+  artifacts:
+    expire_in: 1 hrs
+    paths:
+    - bin/isp-http-redirector
+    - bin/isp-redir-controller
+
+
+build-ubuntu-package:
+  stage: build-stage2
+  only:
+  - test
+  - master
+  - /^release/.*$/
+  image: registry.isp.sky.com/isp/misc/isp-docker-pkgbuild/isp-pkgbuild-ubuntu_16.04
+  script:
+  - build-package
+  - mkdir -p deb_packages/
+  - mv ../*.deb deb_packages/
+  artifacts:
+    expire_in: 1 hrs
+    paths:
+    - deb_packages
+
+
+publish-deb-package:
+  stage: publish
+  only:
+  - /^release/.*$/
+  except:
+  - branches
+  image: registry.isp.sky.com/isp/misc/isp-docker-pkgbuild/isp-pkgbuild-ubuntu_16.04
+  before_script:
+  - mkdir -p deb_packages/void/
+  - cd deb_packages/void/
+  script:
+  - push-to-repo -p test/http-redirector -p test/csp-it -p dev/csp-it
+  dependencies:
+  - build-ubuntu-package
+
+# publish-docs:
+#   stage: publish
+#   only:
+#   - master
+#   tags:
+#   - confluence
+#   image: $CI_REGISTRY/isp/misc/isp-utils-confluence
+#   script:
+#   - md_to_confluence -d ./docs -s ISP -a "LI IP Blocking" -c
